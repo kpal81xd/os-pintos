@@ -1,0 +1,29 @@
+#ignore temp files
+*~
+
+#ignore pdf files (just keep source files)
+*.pdf
+
+#ignore junk files from latex output
+*.out
+*.log
+*.aux
+*.dvi
+*.ps
+
+#ignore junk files from compiling C code
+*.o
+
+#ignore other junk files
+*.backup
+*.kate-swp
+*.swp
+*.snm
+*.vrb
+*.nav
+*.toc
+.idea/*
+CMakeLists.txt
+cmake-build-debug/*
+
+.idea/*

@@ -1,0 +1,363 @@
++-------------------------+
+|         OS 211          |
+|  TASK 2: USER PROGRAMS  |
+|     DESIGN DOCUMENT     |
++-------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Krispal Bamrah kb2117@ic.ac.uk
+Amelia Khavari ak8918@ic.ac.uk
+Brython Caley-Davies bc2918@ic.ac.uk
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, or notes for the
+>> markers, please give them here.
+
+>> Please cite any offline or online sources you consulted while preparing your
+>> submission, other than the Pintos documentation, course text, lecture notes
+>> and course staff.
+
+N/A
+
+  ARGUMENT PASSING
+  ================
+
+---- DATA STRUCTURES ----
+
+>> A1: (1 mark)
+>> Copy here the declaration of each new or changed `struct' or `struct' member,
+>> global or static variable, `typedef', or enumeration.
+>> Identify the purpose of each in roughly 25 words.
+
+'process.h':
+
+#define MAX_FILE_NAME_SIZE 14   /* The maximum number of characters for the
+                                   file_name. */
+#define DWORD 4
+
+struct process_data {
+  struct semaphore loaded;      /* Semaphore to indicate load completion. */
+  char *cmd_line;               /* Stores filename and arguments. */
+  struct thread *parent;        /* Stores pointer to parent thread. */
+  bool load_success;            /* Indicates whether load was successful. */
+};
+
+A struct containing data retrieved from the parent process to pass to the
+child thread. load_success bool and loaded semaphore are used by both parent
+and child to indicate to parent once the child has loaded and if it was
+successful.
+
+---- ALGORITHMS ----
+
+>> A2: (2 marks)
+>> How does your argument parsing code avoid overflowing the user's stack page?
+>> What are the efficiency considerations of your approach?
+
+After the number of arguments and the total number of bytes for each argument
+have been calculated, we calculated the size of the stack and checked to see
+if it would be larger than the page size and if so we return false to indicate
+that the stack would cause an overflow error.
+
+To maximise efficiency when pushing args onto the stack we only used one for
+loop to iterate over each argument and push both its value and its pointer onto
+the stack, instead of having two separate loops to add first the data values
+and then pointers. We do this by assigning two pointers initially one for the
+data and one for the pointer and increment them accordingly as we tokenise the
+cmd line arguments.
+
+---- RATIONALE ----
+
+>> A3: (3 marks)
+>> Why does Pintos implement strtok_r() but not strtok()?
+
+strtok_r() is thread safe version as unlike strtok() you have to provide a
+save_ptr to indicate the progress of the strok through the string. This means
+if multiple threads call strtok_r() they can store their individual progress in
+a separate variable per thread. If strtok() was used then each thread would be
+using the same save_ptr and so this would mean that it can be changed whilst
+another thread is attempting to tokenise.
+
+>> A4: (2 marks)
+>> In Pintos, the kernel separates commands into an executable name and arguments.
+>> In Unix-like systems, the shell does this separation.
+>> Identify two advantages of the Unix approach.
+
+By parsing commands in the kernel you are limited by the size of arguments you
+can use (in Pintos the maximum file name you can open is 14 bytes). By parsing
+it in the shell we can expand this limit to allow command lines with more
+characters to be parsed.
+
+By restricting kernel's functionality maintains it integrity. By not including
+argument parsing this eliminates the possibility of having to deal with bugs,
+edge cases and extreme cases which may lead to exploiting the kernel.
+
+
+SYSTEM CALLS
+============
+
+---- DATA STRUCTURES ----
+
+>> B1: (6 marks)
+>> Copy here the declaration of each new or changed `struct' or `struct' member,
+>> global or static variable, `typedef', or enumeration.
+>> Identify the purpose of each in roughly 25 words.
+
+Additions to 'thread.h':
+
+struct thread
+{
+...
+#ifdef USERPROG
+/* Owned by userprog/process.c. */
+uint32_t *pagedir;                  /* Page directory. */
+
+struct file *exec_file;             /* Executable File */
+
+struct list child_status_list;      /* List of struct exit_status for this
+                            thread's children processes. */
+struct lock child_status_lock;      /* Lock for child status monitor */
+struct condition child_status_cond; /* Condition for child status monitor */
+struct thread *parent;              /* Needed to signal parent and access
+                              this thread's exit_status. */
+int exit_code;                      /* Needed to access exit_code if
+                              parent dies */
+struct file **fd_list;              /* List of file elems */
+int fd_count;                       /* Number of file descriptors */
+int fd_size;                        /* Size of the fd_list */
+
+bool is_kernel;                     /* Whether thread is in kernel or
+                              used by user process */
+#endif
+...
+}
+
+exe_file stores the current file which is our user program that we want to
+deny write access to.
+fd_list is a dynamic array used to map file descriptors to their respective
+files.
+
+struct exit_status
+{
+bool has_terminated;                /* Set when terminates. */
+int exit_code;
+tid_t tid;                          /* Thread identifier of the thread
+                            belonging to the process this
+                            exit_status belongs to. */
+struct list_elem elem_status;       /* List elem for use in fd_list */
+};
+
+The struct containing relevant info about the child process to allow the parent
+to determine the exit_code and whether or not the child's resources should be
+freed.
+
+Additions to 'syscall.h':
+
+#define ARG_SIZE 3
+#define FD_DEFAULT_SIZE 2
+
+FD_DEFAULT_SIZE is used to set the first file descriptor since 0 and 1 are taken
+by STDIN_FILENO and STDOUT_FILENO.
+
+Additions to 'syscall.c':
+
+/* Lock for thread safe handling of files */
+static struct lock filesys_lock;
+
+/* Array storing function pointers to the individual functions handling the
+   system calls. The function pointers are ordered such that the index of each
+   system call's function matches its respective system call enum index so
+   that the enum index of each system call can be mapped to its respective
+   function. */
+static void (*syscall_arr[]) (struct intr_frame *);
+
+---- ALGORITHMS ----
+
+>> B2: (2 marks)
+>> Describe how your code ensures safe memory access of user provided data from
+>> within the kernel.
+
+Whenever a user program attempts to access an address in memory, the pointer to
+this address is checked to ensure it is valid. For it to be valid, it cannot be
+null, must be smaller than PHYS_BASE, i.e. not point to kernel memory and be
+within the bounds of the addressing system. We first check if the pointer is
+not null and if so we can then proceed to check if the address is smaller than
+PHYS_BASE by using is_user_vaddr(). If we would like to check a buffer we check
+if the first pointer is valid and then retrieve the length of the buffer. Then
+we can check the address at the end of the buffer is also valid ensuring that
+the range of addresses are below PHYS_BASE. This is handled by
+is_vaddr_range_valid(). Finally we need to ensure that the data is mapped to
+some actual memory. This can be verified by pagedir_get_page() to retrieve the
+actual address when a virtual address is provided or null otherwise. We use this
+function inside is_page_mem_valid() to validate the address is mapped to a valid
+address.
+
+>> B3: (3 marks)
+>> Suppose that we choose to verify user provided pointers by validating them
+>> before use (i.e. using the first method described in the spec).
+>> What is the least and the greatest possible number of inspections of the page
+>> table (e.g. calls to pagedir_get_page()) that would need to be made in the
+>> following cases?
+>> a) A system call that passes the kernel a pointer to 10 bytes of user data.
+>> b) A system call that passes the kernel a pointer to a full page
+>>    (4,096 bytes) of user data.
+>> c) A system call that passes the kernel a pointer to 4 full pages
+>>    (16,384 bytes) of user data.
+>> You must briefly explain the checking tactic you would use and how it applies
+>> to each case to generate your answers.
+
+a) Least 1, Greatest 2
+In the best case all the user data is in one page and so would require one
+method call. In the worst case the 10 bytes could span across two pages and so
+two method calls would be required, one for each page.
+
+b) Least 1, Greatest 2
+In the best case the user data would all fit within one page therefore requiring
+one method call. Otherwise the data would have to span across 2 pages in worst
+possible case requiring two methods calls, one for each page.
+
+c) Least 4, Greatest 5
+In the best case each page of user data would fill each page requiring 4
+method calls. In the worst case would be where the start of the user data
+doesnt match up with the beginning of a page and so therefore would require
+5 pages each page requiring one method call to check.
+
+>> B4: (2 marks)
+>> When an error is detected during a system call handler, how do you ensure
+>> that all temporarily allocated resources (locks, buffers, etc.) are freed?
+
+If a system call errors, we call syscall_exit(-1). This signals any waiting
+parent process to wake and exit. It also calls process_exit(-1) which frees the
+temporarily allocated resources.
+
+Firstly, process_exit() loops through each of the exiting process's
+children's dynamically allocated exit_status structs freeing each one and
+removing it from its parent's child_status_list. This is possible as the
+children of this process can never be waited on once its parent has exited and
+thus only needs to store its exit_code which is done directly within its
+associated thread struct.
+
+Next, we check to see if there are any open files and if so we iterate through
+our dynamically allocated array of files and close each file before freeing the
+list itself.
+
+Lastly, re allow write access to the file containing the user program that we
+are executing and close it.
+
+>> B5: (8 marks)
+>> Describe your implementation of the "wait" system call and how it interacts
+>> with process termination for both the parent and child.
+
+The first thing wait does is get the relevant process id from the stack. It then
+calls process_wait() with this id. process_wait() stores a pointer to the
+current thread (the parent) and acquires the lock for accessing this thread's
+child_status_list. It then loops through this list searching for a child with
+the corresponding id. If found, the parent will then wait on this child to
+terminate through the use of a monitor. Once the child has terminated, the
+monitor is signalled and process_wait() is resumed which stores the child's exit
+code. The exit_status associated with this child is then removed from the
+parent's child_status_list, freed and the parent's child_status_lock is
+released. Finally, the child's exit code is returned. By removing the child's
+exit_status from its parents' child_status list we ensure that processes can't
+be waited on more than once.
+
+If the id is not found in the list, the parent's child_status_lock is released
+and the error value -1 is returned. This will occur if the id does not belong to
+a direct child of the parent process or if it belongs to a direct child that has
+been waited on already.
+
+---- SYNCHRONIZATION ----
+
+>> B6: (2 marks)
+>> The "exec" system call returns -1 if loading the new executable fails, so it
+>> cannot return before the new executable has completed loading.
+>> How does your code ensure this?
+>> How is the load success/failure status passed back to the thread that calls
+>> "exec"?
+
+First, when the exec system call is called _exec() checks if the command line
+passed in by the intr_frame is valid. If not, syscall_exit(-1) is
+called.
+
+Otherwise, process_execute() is called. This returns the new process' pid
+or TID_ERROR (-1) which is then stored in the eax register of the intr_frame in
+the system call. process_execute() prevents returning any value until either
+the executable has loaded or failed to load. This is achieved by wrapping the
+thread creation for the new process in a semaphore. This semaphore is stored in
+the process_data struct, which handles and stores the new process' relevant
+information, and is only signalled when the load status has been updated, to
+indicate the new executable has either loaded or failed. It then returns either
+the new tid or the error value -1 to the system call which is stored as above.
+
+Inside process_execute() there is a call to thread_create(). We pass in a struct
+storing the process' data, pdata, which is then stored in the kernel thread (the
+parent). thread_create() calls start_process(), which then updates the process'
+data if it starts correctly, which will be accessible by the parent thread,
+ensuring the parent (origin thread for exec call) can access the load/failure
+status.
+
+
+>> B7: (5 marks)
+>> Consider parent process P with child process C.
+>> How do you ensure proper synchronization and avoid race conditions when:
+>>   i) P calls wait(C) before C exits?
+>>  ii) P calls wait(C) after C exits?
+>> iii) P terminates, without waiting, before C exits?
+>>  iv) P terminates, without waiting, after C exits?
+>> Additionally, how do you ensure that all resources are freed regardless of
+>> the above case?
+
+i) As C has not yet exited, it will be in the child_status_list, so we use a
+monitor that waits on child_status_cond and is only signalled when C exits,
+waking P up to then complete the wait call.
+
+ii) Rather than monitoring the child for termination, it moves straight to
+freeing the child's memory, as the while condition is never met.
+
+iii) We store C's exit_status struct in P and on termination P frees this
+memory. However, C also stores its exit code which can be returned directly when
+C exits. This removes the need for a lock as they do not depend on each other.
+
+iv) When C terminates, it gets its exit_status struct from the list maintained
+by P, it then updates these values, signals P it has finishes (which will have
+no effect as P is not waiting on C) and exits. When P comes to terminate, it
+will free C's child status struct from the list.
+
+---- RATIONALE ----
+
+>> B8: (2 marks)
+>> Why did you choose to implement safe access of user memory from the kernel in
+>> the way that you did?
+
+We implemented the method of user memory access employed mainly for simplicity.
+This saved time by using the inbuilt functions is_user_vaddr() and
+pagedir_get_page(). This enabled us to devote more time to handling the
+synchronisation issues in the system call handler and process functions.
+Ultimately, the overheads from using this method were outweighed by this
+efficiency.
+
+>> B9: (2 marks)
+>> What advantages and disadvantages can you see to your design for file
+>> descriptors?
+
+One of the main benefit of using the a dynamically allocated array instead of a
+list is that we can use the file descriptor as the index for retrieving the
+relevant file struct. For a list we have had to store the file descriptor as
+well as a file struct pointer and then to index a file we would have had to
+iterate though the list of elements until we reached the one we wanted.
+
+By using a dynamic array this also meant that once we were done with a file
+we could set the pointer indexed by its file descriptor to null such that when
+we need to open a new file we can just iterate over the array and if there is a
+NULL pointer we can re used the same file descriptor. This means that we only
+need to reallocate memory to increase the size of the array when the array is
+full (i.e. the size of the array is the same as the number of the used
+file descriptors).
+
+The main disadvantage is that when we need to open a number of files all at once
+without closing any of them we need to realloc each time which is an expensive
+operation. If we had used a list we could have just added another element to the
+end of the list without needing to call malloc or realloc each time.

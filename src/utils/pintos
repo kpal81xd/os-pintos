@@ -630,7 +630,7 @@ sub run_qemu {
     push (@cmd, '-S') if $debug eq 'monitor';
     push (@cmd, '-s', '-S') if $debug eq 'gdb';
     push (@cmd, '-monitor', 'null') if $vga eq 'none' && $debug eq 'none';
-    push (@cmd, '--no-kvm');
+    # push (@cmd, '--no-kvm');
     run_command (@cmd);
 }
 
